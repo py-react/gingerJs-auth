@@ -8,8 +8,20 @@ First Import
 ```python
 from ginger_auth.auth import Google_Provider,Auth,Credentials_Provider,Github_Provider
 ```
+
+Creeate a settings.py file in the root
+```python
+GOOGLE_CLIENT_ID = ""
+GOOGLE_CLIENT_SECRET = ""
+
+GITHUB_CLIENT_ID = ""
+GITHUB_CLIENT_SECRET = ""
+```
+
 Then, in your main.py file, add the following lines:
 ```python
+app.config.from_object('settings')
+
 def login(payload):
     print(payload,"payload")
     return payload
