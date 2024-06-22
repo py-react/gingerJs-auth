@@ -20,6 +20,7 @@ GITHUB_CLIENT_SECRET = ""
 
 Then, in your main.py file, add the following lines:
 ```python
+app.secret_key = '!secret'
 app.config.from_object('settings')
 
 def login(payload):
