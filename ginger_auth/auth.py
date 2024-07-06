@@ -94,6 +94,7 @@ def Auth(auth_options):
         user = session.get('user')
         if "protected_routes" in auth_options:
             for route in auth_options['protected_routes']:
+                # TODO: better match logic
                 if not user and request.path.startswith(route):
                     session['next_url'] = request.base_url
                     if "login_page" in  auth_options:
