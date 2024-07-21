@@ -99,7 +99,7 @@ export const useLogin = ()=>{
   
     const loginHook = (loginType,payload)=>{
       if (loginType === "credentials"){
-        sendPostRequest("/oAuth/credentials",payload)
+        sendPostRequest(`/oAuth/credentials?next_url=${nextUrl}`,payload)
       }else{
         const aTag = document.createElement("a")
         if(loginType === "google"){
