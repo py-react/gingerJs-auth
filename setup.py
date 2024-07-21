@@ -19,7 +19,6 @@ setup(
     python_requires='>=3.11.0',  # Specify the minimum Python version required
     install_requires=[
         # List your package dependencies here, e.g.:
-        "ginger_js",
     ],
     include_package_data=True,  # Include additional files specified in MANIFEST.in
 )

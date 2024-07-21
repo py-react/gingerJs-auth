@@ -1,5 +1,32 @@
-from authlib.integrations.flask_client import OAuth
-from flask import request,abort,url_for,session,redirect,current_app
+from authlib.integrations.starlette_client import OAuth
+from fastapi import Request,FastAPI
+from fastapi.routing import APIRoute
+from starlette.status import HTTP_403_FORBIDDEN
+from fastapi.responses import RedirectResponse
+from starlette.config import Config
+from starlette.middleware.base import BaseHTTPMiddleware
+from gingerjs.create_app.routes.flask.middleware import match_static_to_dynamic
+
+
+
+def Create_Auth_middleware_Class(auth_options):
+
+    class AuthMiddleware(BaseHTTPMiddleware):
+        def __init__(self, app: FastAPI):
+            super().__init__(app)
+
+        async def dispatch(self, request, call_next):
+            protected_routes = auth_options.get('protected_routes', [])
+            login_page = auth_options.get('login_page', '/login')
+            # Check if the request path needs authentication
+            if any(match_static_to_dynamic(request.url.path,route) for route in protected_routes):
+                if "user" not in  request.session:
+                    request.session['next_url'] = str(request.url.path)
+                    return RedirectResponse(f"{login_page}?next_url={str(request.url.path)}")
+
+            response = await call_next(request)
+            return response
+    return AuthMiddleware
 
 
 def Google_Provider():
@@ -10,7 +37,8 @@ def Google_Provider():
                 name='google',
                 server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
                 client_kwargs={
-                    'scope': 'openid email profile'
+                    'scope': 'openid email profile',
+                    'prompt': 'select_account',  # force to select account
                 }
             )
     return  {"type":"google","func":func}
@@ -36,12 +64,11 @@ def Credentials_Provider(paasedFunc):
         return paasedFunc(*args, **kwargs)
     return {"type":"credentials","func":func}
 
-def Auth(auth_options):
-    app = current_app
+def Auth(auth_options,app):
     if not auth_options:
         raise ValueError("No Auth Option Provided")
-    
-    oauth = OAuth(app)
+    config = Config(".env")
+    oauth = OAuth(config)
     if not auth_options["providers"]:
         raise ValueError("providers not provided in auth_options")
     
@@ -50,59 +77,71 @@ def Auth(auth_options):
             provider["func"](oauth)
 
     
-    def login(name):
-        if request.args.get("next_url"):
-            session['next_url'] = request.args.get("next_url")
+    async def login(request:Request,name,next_url):
+        if next_url:
+            request.session['next_url'] = next_url
         if name == "credentials":
-            data = request.get_json()
+            data = await request.json()
             user = None
             for credFlow in auth_options["providers"]:
                 if credFlow["type"] == name:
                     user = credFlow['func'](data)
-                    break
             
-            session['user'] = user
-            request.session_user = session['user']
-            return redirect(session['next_url'])
+            request.session['user'] = user
+            request.session_user = request.session['user']
+            return RedirectResponse(request.session['next_url'])
             
         client = oauth.create_client(name)
         if not client:
-            abort(404)
-        redirect_uri = url_for('auth', name=name, _external=True)
+            raise HTTP_403_FORBIDDEN(404)
+        # Get the host (domain) and port
+        host = request.url.hostname
+        port = request.url.port
         
-        return client.authorize_redirect(redirect_uri)
+        # Get the protocol (http or https)
+        protocol = request.url.scheme
+        redirect_uri = f"{protocol}://{host}:{port}/auth/{name}"
+        return await client.authorize_redirect(request,redirect_uri)
 
-    def auth(name):
+    async def auth(request:Request,name):
         if(name != "credentials"):
             client = oauth.create_client(name)
             if not client:
-                abort(404)
+                raise HTTP_403_FORBIDDEN(404)
 
-            token = client.authorize_access_token()
+            token = await client.authorize_access_token(request)
             user = token.get('userinfo')
             if not user:
                 user = client.userinfo()
-            session['user'] = user
-        request.session_user = session['user']
-        return redirect(session['next_url'])
+            request.session['user'] = user
+        request.session_user = request.session['user']
+        return RedirectResponse(request.session['next_url'])
 
-    def logout():
-        session.pop('user', None)
-        return redirect('/')
+    def logout(request:Request):
+        request.session.pop('user', None)
+        return RedirectResponse('/')
     
-    def authMiddleware():
-        user = session.get('user')
-        if "protected_routes" in auth_options:
-            for route in auth_options['protected_routes']:
-                # TODO: better match logic
-                if not user and request.path.startswith(route):
-                    session['next_url'] = request.base_url
-                    if "login_page" in  auth_options:
-                        return redirect(auth_options["login_page"]+"?next_url="+request.base_url)
-                    return redirect(f"/login?next_url={request.base_url}")
-                
-    app.before_request(authMiddleware)
-    app.add_url_rule("/oAuth/<name>",view_func=login,methods=['GET',"POST"])
-    app.add_url_rule("/auth/<name>",view_func=auth)
-    app.add_url_rule("/logout",view_func=logout)
+    app.add_middleware(Create_Auth_middleware_Class(auth_options))
+    oAuthRoute =APIRoute(
+        path= "/oAuth/{name}",
+        endpoint=login,
+        methods=['GET',"POST"],
+        name="oAuth",
+    )
+    app.router.routes.append(oAuthRoute)
+    authRoute =APIRoute(
+        path= "/auth/{name}",
+        endpoint=auth,
+        methods=['GET',"POST"],
+        name="auth",
+    )
+    app.router.routes.append(authRoute)
+    logoutRoute =APIRoute(
+        path= "/logout",
+        endpoint=logout,
+        methods=['GET',"POST"],
+        name="logout",
+    )
+    app.router.routes.append(logoutRoute)
+    
     return oauth
